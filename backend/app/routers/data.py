@@ -532,6 +532,184 @@ def get_exercises(
     }
 
 
+# ─── Glucose ───────────────────────────────────────────────────
+
+@router.get("/data/glucose")
+def get_glucose_readings(
+    date_str: str = Query(..., alias="date"),
+    db: Session = Depends(get_db),
+):
+    """Get glucose readings for a specific day."""
+    target_date = date.fromisoformat(date_str)
+    start_dt = datetime.combine(target_date, datetime.min.time())
+    end_dt = datetime.combine(target_date + timedelta(days=1), datetime.min.time())
+
+    readings = db.query(models.GlucoseReading).filter(
+        and_(
+            models.GlucoseReading.timestamp >= start_dt,
+            models.GlucoseReading.timestamp < end_dt
+        )
+    ).order_by(models.GlucoseReading.timestamp).all()
+
+    return {
+        "date": date_str,
+        "readings": [
+            {
+                "timestamp": r.timestamp.isoformat(),
+                "value": r.value,
+                "source": r.source
+            }
+            for r in readings
+        ]
+    }
+
+
+@router.get("/data/glucose/daily")
+def get_glucose_daily(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Get daily glucose summaries."""
+    start_date, end_date = _date_range(start, end)
+    start_dt, end_dt = _dt_range(start_date, end_date)
+
+    # Query with date grouping
+    results = db.query(
+        func.date(models.GlucoseReading.timestamp).label("date"),
+        func.avg(models.GlucoseReading.value).label("avg"),
+        func.min(models.GlucoseReading.value).label("min"),
+        func.max(models.GlucoseReading.value).label("max"),
+        func.count(models.GlucoseReading.id).label("count")
+    ).filter(
+        and_(
+            models.GlucoseReading.timestamp >= start_dt,
+            models.GlucoseReading.timestamp < end_dt
+        )
+    ).group_by(
+        func.date(models.GlucoseReading.timestamp)
+    ).order_by(
+        func.date(models.GlucoseReading.timestamp)
+    ).all()
+
+    return [
+        {
+            "date": str(r.date),
+            "avg": round(r.avg),
+            "min": r.min,
+            "max": r.max,
+            "count": r.count
+        }
+        for r in results
+    ]
+
+
+@router.get("/data/glucose/time-in-range")
+def get_glucose_time_in_range(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    low_threshold: int = Query(70),
+    high_threshold: int = Query(180),
+    db: Session = Depends(get_db),
+):
+    """Calculate time in range statistics."""
+    start_date, end_date = _date_range(start, end)
+    start_dt, end_dt = _dt_range(start_date, end_date)
+
+    readings = db.query(models.GlucoseReading.value).filter(
+        and_(
+            models.GlucoseReading.timestamp >= start_dt,
+            models.GlucoseReading.timestamp < end_dt
+        )
+    ).all()
+
+    if not readings:
+        return {
+            "total_readings": 0,
+            "in_range_percent": 0,
+            "low_percent": 0,
+            "high_percent": 0,
+            "very_low_percent": 0,
+            "very_high_percent": 0
+        }
+
+    total = len(readings)
+    low = sum(1 for r in readings if r.value < low_threshold)
+    high = sum(1 for r in readings if r.value > high_threshold)
+    very_low = sum(1 for r in readings if r.value < 54)
+    very_high = sum(1 for r in readings if r.value > 250)
+    in_range = total - low - high
+
+    return {
+        "total_readings": total,
+        "in_range_percent": round(in_range / total * 100, 1),
+        "low_percent": round(low / total * 100, 1),
+        "high_percent": round(high / total * 100, 1),
+        "very_low_percent": round(very_low / total * 100, 1),
+        "very_high_percent": round(very_high / total * 100, 1)
+    }
+
+
+@router.get("/data/glucose/agp")
+def get_glucose_agp(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Calculate Ambulatory Glucose Profile (percentiles by hour of day)."""
+    import numpy as np
+
+    start_date, end_date = _date_range(start, end)
+    # Default to 14 days for AGP
+    if start is None:
+        start_date = end_date - timedelta(days=14)
+
+    start_dt, end_dt = _dt_range(start_date, end_date)
+
+    readings = db.query(
+        models.GlucoseReading.timestamp,
+        models.GlucoseReading.value
+    ).filter(
+        and_(
+            models.GlucoseReading.timestamp >= start_dt,
+            models.GlucoseReading.timestamp < end_dt
+        )
+    ).all()
+
+    # Group by hour of day
+    hourly_values: dict = {h: [] for h in range(24)}
+    for r in readings:
+        hour = r.timestamp.hour
+        hourly_values[hour].append(r.value)
+
+    hourly_stats = []
+    for hour in range(24):
+        values = hourly_values[hour]
+        if not values:
+            hourly_stats.append({
+                "hour": hour,
+                "p10": None, "p25": None, "median": None, "p75": None, "p90": None, "count": 0
+            })
+        else:
+            arr = np.array(values)
+            hourly_stats.append({
+                "hour": hour,
+                "p10": int(np.percentile(arr, 10)),
+                "p25": int(np.percentile(arr, 25)),
+                "median": int(np.percentile(arr, 50)),
+                "p75": int(np.percentile(arr, 75)),
+                "p90": int(np.percentile(arr, 90)),
+                "count": len(values)
+            })
+
+    return {
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "total_readings": len(readings),
+        "hourly": hourly_stats
+    }
+
+
 # ─── Correlations ─────────────────────────────────────────────
 
 CORRELATION_METRICS = {
@@ -551,7 +729,40 @@ CORRELATION_METRICS = {
     "active_minutes": (models.ActivityDaily, "date", "minutes_very_active"),
     "active_zone_minutes": (models.ActivityDaily, "date", "active_zone_minutes"),
     "stress": (models.StressScore, "date", "stress_score"),
+    "avg_glucose": None,  # Special handling - requires daily aggregation
 }
+
+
+def _get_glucose_daily_avg(db: Session, start_date: date, end_date: date) -> dict:
+    """Get daily average glucose values as a date->value map."""
+    start_dt, end_dt = _dt_range(start_date, end_date)
+
+    results = db.query(
+        func.date(models.GlucoseReading.timestamp).label("date"),
+        func.avg(models.GlucoseReading.value).label("avg")
+    ).filter(
+        and_(
+            models.GlucoseReading.timestamp >= start_dt,
+            models.GlucoseReading.timestamp < end_dt
+        )
+    ).group_by(func.date(models.GlucoseReading.timestamp)).all()
+
+    return {str(g.date): round(g.avg) for g in results}
+
+
+def _get_metric_data(metric: str, db: Session, start_date: date, end_date: date) -> dict:
+    """Fetch metric data and return as date->value map."""
+    if metric == "avg_glucose":
+        return _get_glucose_daily_avg(db, start_date, end_date)
+
+    model, date_col, val_col = CORRELATION_METRICS[metric]
+    rows = db.query(
+        getattr(model, date_col), getattr(model, val_col)
+    ).filter(
+        and_(getattr(model, date_col) >= start_date, getattr(model, date_col) <= end_date)
+    ).all()
+
+    return {str(row[0]): row[1] for row in rows if row[1] is not None}
 
 
 @router.get("/data/correlations")
@@ -572,25 +783,9 @@ def get_correlations(
     if not start:
         start_date = end_date - timedelta(days=90)
 
-    x_model, x_date_col, x_val_col = CORRELATION_METRICS[x]
-    y_model, y_date_col, y_val_col = CORRELATION_METRICS[y]
-
-    # Fetch both series
-    x_rows = db.query(
-        getattr(x_model, x_date_col), getattr(x_model, x_val_col)
-    ).filter(
-        and_(getattr(x_model, x_date_col) >= start_date, getattr(x_model, x_date_col) <= end_date)
-    ).all()
-
-    y_rows = db.query(
-        getattr(y_model, y_date_col), getattr(y_model, y_val_col)
-    ).filter(
-        and_(getattr(y_model, y_date_col) >= start_date, getattr(y_model, y_date_col) <= end_date)
-    ).all()
-
-    # Join on date
-    x_map = {str(row[0]): row[1] for row in x_rows if row[1] is not None}
-    y_map = {str(row[0]): row[1] for row in y_rows if row[1] is not None}
+    # Fetch both series (with special handling for glucose)
+    x_map = _get_metric_data(x, db, start_date, end_date)
+    y_map = _get_metric_data(y, db, start_date, end_date)
 
     common_dates = sorted(set(x_map.keys()) & set(y_map.keys()))
     points = [
@@ -617,3 +812,101 @@ def get_correlations(
         "points": points,
         "availableMetrics": list(CORRELATION_METRICS.keys()),
     }
+
+
+# ─── CGM Sync ──────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+
+class CGMSyncRequest(BaseModel):
+    """Request body for CGM sync endpoint."""
+    email: str
+    password: str
+    region: str = "us"  # "us" or "eu"
+
+
+@router.post("/sync/cgm")
+async def sync_cgm(
+    request: CGMSyncRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Sync glucose data from LibreLinkUp.
+
+    Authenticates with LibreLinkUp using provided credentials, fetches glucose
+    readings from all connected patients, and imports them into the database.
+
+    Args:
+        request: CGMSyncRequest with email, password, and optional region
+
+    Returns:
+        Dictionary with sync results including readings imported count
+    """
+    from app.services.librelinkup import LibreLinkUpClient, LibreLinkUpError
+
+    try:
+        client = LibreLinkUpClient(
+            email=request.email,
+            password=request.password,
+            region=request.region
+        )
+
+        # Authenticate
+        if not await client.login():
+            return {
+                "success": False,
+                "error": "Failed to authenticate with LibreLinkUp. Check email and password."
+            }
+
+        # Get connected patients
+        connections = await client.get_connections()
+        if not connections:
+            return {
+                "success": False,
+                "error": "No connected patients found in LibreLinkUp account."
+            }
+
+        # Fetch and import readings from all connections
+        total_imported = 0
+        total_readings = 0
+
+        for connection in connections:
+            patient_id = connection.get("patientId")
+            if not patient_id:
+                continue
+
+            readings = await client.get_readings(patient_id)
+            total_readings += len(readings)
+
+            # Import readings (avoid duplicates by timestamp)
+            for r in readings:
+                existing = db.query(models.GlucoseReading).filter(
+                    models.GlucoseReading.timestamp == r["timestamp"]
+                ).first()
+
+                if not existing:
+                    db.add(models.GlucoseReading(**r))
+                    total_imported += 1
+
+        db.commit()
+
+        return {
+            "success": True,
+            "readings_imported": total_imported,
+            "total_readings_fetched": total_readings,
+            "connections_synced": len(connections),
+            "source": "librelinkup"
+        }
+
+    except LibreLinkUpError as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }

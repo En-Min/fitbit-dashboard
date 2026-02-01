@@ -8,6 +8,7 @@ import {
   XCircle,
   FileArchive,
   AlertCircle,
+  Droplet,
 } from "lucide-react";
 import {
   uploadExport,
@@ -34,6 +35,12 @@ export default function Settings() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // CGM upload state
+  const [cgmUploading, setCgmUploading] = useState(false);
+  const [cgmResult, setCgmResult] = useState<string | null>(null);
+  const [cgmError, setCgmError] = useState<string | null>(null);
+  const cgmInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch auth status on mount
   useEffect(() => {
@@ -107,6 +114,52 @@ export default function Settings() {
   const handleConnect = () => {
     const authUrl = getAuthUrl();
     window.open(authUrl, "_blank");
+  };
+
+  // --- CGM Upload Handlers ---
+
+  const handleCgmUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith(".csv")) {
+      setCgmError("Please upload a .csv file");
+      return;
+    }
+
+    setCgmUploading(true);
+    setCgmResult(null);
+    setCgmError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("http://localhost:8000/api/upload/cgm", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText || "Upload failed");
+      }
+
+      const data = await res.json();
+      setCgmResult(
+        `Imported ${data.readings_imported} glucose readings (${data.total_in_file} in file)`
+      );
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Upload failed unexpectedly";
+      setCgmError(message);
+    } finally {
+      setCgmUploading(false);
+      // Reset input
+      if (cgmInputRef.current) {
+        cgmInputRef.current.value = "";
+      }
+    }
   };
 
   // --- Sync Handlers ---
@@ -257,6 +310,67 @@ export default function Settings() {
             <div className="status-message error">
               <AlertCircle size={16} />
               <span>{authError}</span>
+            </div>
+          )}
+        </div>
+
+        {/* CGM Upload Section */}
+        <div className="card">
+          <div className="card-header">
+            <Droplet size={20} />
+            <h3>CGM Data Import</h3>
+          </div>
+          <p className="card-description">
+            Upload your CGM export CSV file to import glucose readings. Supports
+            exports from health tracking apps with GlucoseMeasurement data.
+          </p>
+
+          <div style={{ marginTop: 16 }}>
+            <input
+              ref={cgmInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleCgmUpload}
+              disabled={cgmUploading}
+              style={{
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-color)",
+                borderRadius: "var(--radius-sm)",
+                color: "var(--text-primary)",
+                padding: "10px 14px",
+                fontSize: 14,
+                width: "100%",
+                cursor: cgmUploading ? "not-allowed" : "pointer",
+              }}
+            />
+          </div>
+
+          {cgmUploading && (
+            <div
+              style={{
+                marginTop: 12,
+                color: "var(--text-muted)",
+                fontSize: 14,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <RefreshCw size={16} className="spin" />
+              Uploading...
+            </div>
+          )}
+
+          {cgmResult && (
+            <div className="status-message success">
+              <CheckCircle size={16} />
+              <span>{cgmResult}</span>
+            </div>
+          )}
+          {cgmError && (
+            <div className="status-message error">
+              <XCircle size={16} />
+              <span>{cgmError}</span>
             </div>
           )}
         </div>

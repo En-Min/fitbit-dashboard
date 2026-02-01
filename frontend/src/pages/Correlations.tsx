@@ -39,6 +39,7 @@ const METRIC_LABELS: Record<string, string> = {
   active_minutes: "Very Active Minutes",
   active_zone_minutes: "Active Zone Minutes",
   stress: "Stress Score",
+  avg_glucose: "Average Glucose (mg/dL)",
 };
 
 const ALL_METRICS = Object.keys(METRIC_LABELS);
@@ -70,6 +71,8 @@ const SUGGESTED_PAIRS: SuggestedPair[] = [
   { label: "Deep Sleep vs HRV", x: "deep_sleep", y: "hrv" },
   { label: "VO2 Max vs Active Zone Minutes", x: "vo2_max", y: "active_zone_minutes" },
   { label: "Skin Temp vs Sleep Score", x: "skin_temp", y: "sleep_score" },
+  { label: "Glucose vs Sleep Score", x: "avg_glucose", y: "sleep_score" },
+  { label: "Glucose vs Resting HR", x: "avg_glucose", y: "resting_hr" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -180,6 +183,28 @@ export default function Correlations() {
   const [data, setData] = useState<CorrelationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch earliest date from metrics on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/metrics`)
+      .then((res) => res.json())
+      .then((data) => {
+        // Find earliest date across all metrics
+        const dates: string[] = [];
+        if (data.metrics && Array.isArray(data.metrics)) {
+          for (const metric of data.metrics) {
+            if (metric.first_date) dates.push(metric.first_date);
+          }
+        }
+        if (dates.length > 0) {
+          dates.sort();
+          setStartDate(dates[0]);
+        }
+      })
+      .catch(() => {
+        // Fallback to 90 days if metrics fetch fails
+      });
+  }, []);
 
   /* Fetch data --------------------------------------------------- */
 

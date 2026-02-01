@@ -323,8 +323,8 @@ export default function Activity() {
                     color: "var(--text-primary)",
                     fontSize: 13,
                   }}
-                  formatter={(value: number | string) => [
-                    Number(value).toLocaleString(),
+                  formatter={(value) => [
+                    Number(value ?? 0).toLocaleString(),
                     "Steps",
                   ]}
                   cursor={{ fill: "rgba(255,255,255,0.04)" }}
@@ -561,8 +561,8 @@ export default function Activity() {
                     color: "var(--text-primary)",
                     fontSize: 13,
                   }}
-                  formatter={(value: number | string, name: string) => [
-                    `${value} min`,
+                  formatter={(value, name) => [
+                    `${value ?? 0} min`,
                     name,
                   ]}
                   cursor={{ fill: "rgba(255,255,255,0.04)" }}
@@ -657,8 +657,8 @@ export default function Activity() {
                     color: "var(--text-primary)",
                     fontSize: 13,
                   }}
-                  formatter={(value: number | string) => [
-                    `${Number(value).toFixed(1)} mL/kg/min`,
+                  formatter={(value) => [
+                    `${Number(value ?? 0).toFixed(1)} mL/kg/min`,
                     "VO2 Max",
                   ]}
                 />

@@ -10,7 +10,6 @@ import type {
   SkinTemperature,
   VO2Max,
   ActivityDaily,
-  ActivityIntraday,
   StressScore,
   Exercise,
   MetricInfo,

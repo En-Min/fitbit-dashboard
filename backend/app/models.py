@@ -220,6 +220,20 @@ class Exercise(Base):
     distance_km = Column(Float, nullable=True)
 
 
+class GlucoseReading(Base):
+    """CGM glucose readings from CSV import or LibreLinkUp sync."""
+    __tablename__ = "glucose_readings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    value = Column(Integer, nullable=False)  # mg/dL
+    source = Column(String(50), nullable=True)  # "csv_import", "librelinkup", "manual"
+
+    __table_args__ = (
+        Index("ix_glucose_timestamp", "timestamp", unique=True),
+    )
+
+
 class SyncStatus(Base):
     """Tracks last successful sync per data type."""
     __tablename__ = "sync_status"

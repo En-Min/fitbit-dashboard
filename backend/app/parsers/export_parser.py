@@ -181,6 +181,54 @@ def _read_csv_rows(zf: zipfile.ZipFile, path: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# CGM Parser (standalone CSV)
+# ---------------------------------------------------------------------------
+
+
+def parse_cgm_csv(file) -> list[dict]:
+    """Parse CGM data from health export CSV format.
+
+    Expects CSV with columns: class,value,...,occurred_at,...
+    Filters for rows where class == "GlucoseMeasurement".
+
+    Args:
+        file: A file-like object (StringIO or opened file) containing CSV data.
+
+    Returns:
+        List of dicts with keys: timestamp, value, source
+    """
+    import re
+
+    readings = []
+    reader = csv.DictReader(file)
+
+    for row in reader:
+        if row.get("class") != "GlucoseMeasurement":
+            continue
+
+        try:
+            value = int(float(row["value"]))
+            occurred_at = row["occurred_at"]
+
+            # Parse timestamp like "2022-12-01 19:14:27 -0800"
+            # Remove timezone offset for naive datetime
+            match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", occurred_at)
+            if not match:
+                continue
+            timestamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+
+            readings.append({
+                "timestamp": timestamp,
+                "value": value,
+                "source": "csv_import"
+            })
+        except (ValueError, KeyError):
+            continue
+
+    return readings
+
+
+# ---------------------------------------------------------------------------
 # Data-type parsers
 # ---------------------------------------------------------------------------
 

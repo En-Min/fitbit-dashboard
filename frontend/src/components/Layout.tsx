@@ -6,6 +6,7 @@ import {
   BarChart3,
   Settings,
   LayoutDashboard,
+  Droplet,
 } from "lucide-react";
 
 interface NavItem {
@@ -19,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/heart-rate", label: "Heart Rate", icon: <Heart size={20} /> },
   { to: "/sleep", label: "Sleep", icon: <Moon size={20} /> },
   { to: "/activity", label: "Activity", icon: <Activity size={20} /> },
+  { to: "/glucose", label: "Glucose", icon: <Droplet size={20} /> },
   {
     to: "/correlations",
     label: "Correlations",
