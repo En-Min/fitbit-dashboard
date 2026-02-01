@@ -1110,6 +1110,211 @@ def _aggregate_daily_activity(db: Session) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Resting Heart Rate Calculation from Intraday Data
+# ---------------------------------------------------------------------------
+
+
+def calculate_resting_hr_from_intraday(db: Session) -> int:
+    """Calculate daily resting heart rate from intraday data.
+
+    Uses the standard method of finding the lowest 30-minute rolling average
+    of heart rate during the day. This typically occurs during deep sleep or rest.
+
+    For dates with HeartRateIntraday data but no HeartRateDaily record (or
+    missing resting_heart_rate), calculates the resting HR and inserts/updates
+    the HeartRateDaily record.
+
+    Args:
+        db: An active SQLAlchemy Session.
+
+    Returns:
+        The count of days processed (records created or updated).
+    """
+    from sqlalchemy import func, distinct
+
+    # Get all distinct dates that have intraday data
+    # SQLite returns strings from func.date(), so we'll get them as strings
+    dates_with_intraday = db.query(
+        func.date(HeartRateIntraday.timestamp).label('date')
+    ).distinct().order_by(func.date(HeartRateIntraday.timestamp)).all()
+
+    total_dates = len(dates_with_intraday)
+    logger.info("Found %d dates with intraday heart rate data", total_dates)
+
+    count = 0
+    skipped_existing = 0
+    skipped_insufficient = 0
+
+    for idx, (date_str,) in enumerate(dates_with_intraday):
+        # Convert string to Python date object
+        # SQLite returns date as string 'YYYY-MM-DD'
+        if isinstance(date_str, str):
+            record_date = _parse_date_from_string(date_str)
+        else:
+            record_date = date_str
+
+        # Check if we already have a resting HR for this date
+        existing = db.query(HeartRateDaily).filter(
+            HeartRateDaily.date == record_date
+        ).first()
+
+        if existing and existing.resting_heart_rate is not None:
+            skipped_existing += 1
+            continue
+
+        # Get all heart rate readings for this date, ordered by timestamp
+        # Use the original string format for SQLite comparison
+        readings = db.query(HeartRateIntraday.bpm).filter(
+            func.date(HeartRateIntraday.timestamp) == date_str
+        ).order_by(HeartRateIntraday.timestamp).all()
+
+        # Filter valid BPM values (physiologically reasonable: 30-200 bpm)
+        bpm_values = [r.bpm for r in readings if r.bpm and 30 < r.bpm < 200]
+
+        if len(bpm_values) < 30:
+            # Need at least 30 readings for a meaningful 30-sample window
+            skipped_insufficient += 1
+            continue
+
+        # Calculate 30-sample rolling averages and find minimum
+        # Note: Fitbit typically records every 5 seconds, so 30 samples = ~2.5 minutes
+        # For better accuracy with sparse data, we use 30 consecutive readings
+        window_size = 30
+        min_avg = float('inf')
+
+        for i in range(len(bpm_values) - window_size + 1):
+            window = bpm_values[i:i + window_size]
+            avg = sum(window) / len(window)
+            if avg < min_avg:
+                min_avg = avg
+
+        resting_hr = round(min_avg)
+
+        # Upsert the HeartRateDaily record
+        if existing:
+            existing.resting_heart_rate = resting_hr
+        else:
+            db.add(HeartRateDaily(date=record_date, resting_heart_rate=resting_hr))
+
+        count += 1
+
+        # Commit in batches to avoid memory issues and show progress
+        if count % 100 == 0:
+            db.commit()
+            logger.info(
+                "Processed %d/%d dates (%d skipped existing, %d insufficient data)...",
+                idx + 1, total_dates, skipped_existing, skipped_insufficient
+            )
+
+    # Final commit
+    db.commit()
+
+    logger.info(
+        "Resting HR calculation complete: %d days processed, "
+        "%d skipped (existing), %d skipped (insufficient data)",
+        count, skipped_existing, skipped_insufficient
+    )
+
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Heart Rate Zone Minutes Calculation from Intraday Data
+# ---------------------------------------------------------------------------
+
+
+def calculate_hr_zones_from_intraday(
+    db: Session,
+    fat_burn_min: int = 129,
+    cardio_min: int = 158,
+    peak_min: int = 179
+) -> int:
+    """Calculate HR zone minutes from intraday data for days missing zone data.
+
+    Uses the Heart Rate Reserve method zone thresholds provided by the user.
+    Fitbit typically records heart rate every ~5 seconds (12 readings per minute),
+    so we divide the count of readings in each zone by 12 to estimate minutes.
+
+    Args:
+        db: An active SQLAlchemy Session.
+        fat_burn_min: Minimum BPM for fat burn zone (default 129).
+        cardio_min: Minimum BPM for cardio zone (default 158).
+        peak_min: Minimum BPM for peak zone (default 179).
+
+    Returns:
+        The count of HeartRateDaily records updated.
+    """
+    from sqlalchemy import func
+
+    # Get all dates that need zone calculation (have HeartRateDaily record but no zone data)
+    dates_needing_zones = db.query(HeartRateDaily).filter(
+        HeartRateDaily.fat_burn_minutes.is_(None)
+    ).all()
+
+    total_dates = len(dates_needing_zones)
+    logger.info(
+        "Found %d dates needing HR zone calculation (thresholds: fat_burn>=%d, cardio>=%d, peak>=%d)",
+        total_dates, fat_burn_min, cardio_min, peak_min
+    )
+
+    count = 0
+    skipped_no_data = 0
+
+    for idx, daily in enumerate(dates_needing_zones):
+        # Get all heart rate readings for this date
+        # Convert date to string format for SQLite comparison
+        date_str = daily.date.isoformat()
+
+        readings = db.query(HeartRateIntraday.bpm).filter(
+            func.date(HeartRateIntraday.timestamp) == date_str
+        ).all()
+
+        if not readings:
+            skipped_no_data += 1
+            continue
+
+        # Count readings in each zone
+        fat_burn = 0
+        cardio = 0
+        peak = 0
+
+        for (bpm,) in readings:
+            if bpm is None:
+                continue
+            if bpm >= peak_min:
+                peak += 1
+            elif bpm >= cardio_min:
+                cardio += 1
+            elif bpm >= fat_burn_min:
+                fat_burn += 1
+
+        # Convert to minutes (assuming ~5 second intervals = 12 readings/minute)
+        daily.fat_burn_minutes = round(fat_burn / 12)
+        daily.cardio_minutes = round(cardio / 12)
+        daily.peak_minutes = round(peak / 12)
+
+        count += 1
+
+        # Commit in batches to avoid memory issues and show progress
+        if count % 100 == 0:
+            db.commit()
+            logger.info(
+                "Processed %d/%d dates (%d skipped - no intraday data)...",
+                count, total_dates, skipped_no_data
+            )
+
+    # Final commit
+    db.commit()
+
+    logger.info(
+        "HR zone calculation complete: %d days updated, %d skipped (no intraday data)",
+        count, skipped_no_data
+    )
+
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 

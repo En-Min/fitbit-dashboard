@@ -814,6 +814,39 @@ def get_correlations(
     }
 
 
+# ─── Resting HR Calculation ────────────────────────────────────
+
+@router.post("/data/calculate-resting-hr")
+def calculate_resting_hr(db: Session = Depends(get_db)):
+    """
+    Calculate daily resting heart rate from intraday data.
+
+    Uses the standard method of finding the lowest 30-sample rolling average
+    of heart rate readings. This typically occurs during deep sleep or rest.
+
+    Processes all dates that have HeartRateIntraday data but no HeartRateDaily
+    record (or missing resting_heart_rate).
+
+    Returns:
+        Dictionary with count of days processed.
+    """
+    from app.parsers.export_parser import calculate_resting_hr_from_intraday
+
+    try:
+        count = calculate_resting_hr_from_intraday(db)
+        return {
+            "success": True,
+            "days_processed": count,
+            "message": f"Calculated resting heart rate for {count} days"
+        }
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 # ─── CGM Sync ──────────────────────────────────────────────────
 
 from pydantic import BaseModel
