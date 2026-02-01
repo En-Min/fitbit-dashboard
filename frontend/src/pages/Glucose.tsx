@@ -510,7 +510,7 @@ export default function Glucose() {
                 interval={Math.max(0, Math.floor(intradayChartData.length / 12) - 1)}
               />
               <YAxis
-                domain={[40, 250]}
+                domain={["dataMin - 10", "dataMax + 10"]}
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
@@ -584,7 +584,7 @@ export default function Glucose() {
                 axisLine={{ stroke: "#2e3348" }}
               />
               <YAxis
-                domain={[40, 250]}
+                domain={["dataMin - 10", "dataMax + 10"]}
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
