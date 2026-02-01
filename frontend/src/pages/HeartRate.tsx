@@ -17,6 +17,12 @@ import {
   ComposedChart,
 } from "recharts";
 import DateRangePicker from "../components/DateRangePicker";
+import { ChartModal, ExpandButton } from "../components/ChartModal";
+import {
+  spansMultipleYears,
+  formatDateLabel,
+  calculateTickInterval,
+} from "../utils/dateFormat";
 import type {
   HeartRateReading,
   HeartRateDaily,
@@ -236,6 +242,9 @@ export default function HeartRate() {
   const [loadingDaily, setLoadingDaily] = useState(false);
   const [loadingHRV, setLoadingHRV] = useState(false);
 
+  // Modal state for expanded charts
+  const [expandedChart, setExpandedChart] = useState<string | null>(null);
+
   // --- Date range change handler ---
   const handleDateRangeChange = useCallback((start: string, end: string) => {
     setStartDate(start);
@@ -329,6 +338,10 @@ export default function HeartRate() {
     return todayEntry?.restingHeartRate ?? null;
   }, [dailyHR, selectedDay]);
 
+  // Detect if date range spans multiple years
+  const dateList = useMemo(() => dailyHR.map((d) => d.date), [dailyHR]);
+  const needsYear = useMemo(() => spansMultipleYears(dateList), [dateList]);
+
   // --- Derived: resting HR trend with linear regression line ---
   const restingHRTrendData = useMemo(() => {
     const filtered = dailyHR.filter(
@@ -342,29 +355,32 @@ export default function HeartRate() {
 
     return filtered.map((d, i) => ({
       date: d.date,
+      dateLabel: formatDateLabel(d.date, needsYear),
       restingHR: d.restingHeartRate,
       trend: Math.round((regression.slope * i + regression.intercept) * 10) / 10,
     }));
-  }, [dailyHR]);
+  }, [dailyHR, needsYear]);
 
   // --- Derived: zone data for bar chart ---
   const zoneChartData = useMemo(() => {
     return dailyHR.map((d) => ({
       date: d.date,
+      dateLabel: formatDateLabel(d.date, needsYear),
       fatBurn: d.fatBurnMinutes,
       cardio: d.cardioMinutes,
       peak: d.peakMinutes,
     }));
-  }, [dailyHR]);
+  }, [dailyHR, needsYear]);
 
   // --- Derived: HRV trend data ---
   const hrvChartData = useMemo(() => {
     return hrvDaily.map((d) => ({
       date: d.date,
+      dateLabel: formatDateLabel(d.date, needsYear),
       dailyRmssd: d.dailyRmssd,
       deepRmssd: d.deepRmssd ?? null,
     }));
-  }, [hrvDaily]);
+  }, [hrvDaily, needsYear]);
 
   // --- Compute intraday XAxis tick interval ---
   const intradayTickInterval = useMemo(() => {
@@ -530,9 +546,12 @@ export default function HeartRate() {
       {/* Section 2: Resting Heart Rate Trend                              */}
       {/* ================================================================ */}
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-header">
-          <Heart size={18} />
-          <h3>Resting Heart Rate Trend</h3>
+        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Heart size={18} />
+            <h3>Resting Heart Rate Trend</h3>
+          </div>
+          <ExpandButton onClick={() => setExpandedChart("restingHR")} />
         </div>
         <p className="card-description">
           Daily resting heart rate with a linear trend line over the selected
@@ -555,14 +574,11 @@ export default function HeartRate() {
                 vertical={false}
               />
               <XAxis
-                dataKey="date"
+                dataKey="dateLabel"
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
-                interval={Math.max(
-                  0,
-                  Math.floor(restingHRTrendData.length / 10) - 1
-                )}
+                interval={calculateTickInterval(restingHRTrendData.length)}
               />
               <YAxis
                 domain={["dataMin - 3", "dataMax + 3"]}
@@ -607,9 +623,12 @@ export default function HeartRate() {
       {/* Section 3: Heart Rate Zones                                      */}
       {/* ================================================================ */}
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-header">
-          <Heart size={18} />
-          <h3>Heart Rate Zones</h3>
+        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Heart size={18} />
+            <h3>Heart Rate Zones</h3>
+          </div>
+          <ExpandButton onClick={() => setExpandedChart("zones")} />
         </div>
         <p className="card-description">
           Daily minutes in Fat Burn, Cardio, and Peak zones.
@@ -631,16 +650,14 @@ export default function HeartRate() {
                 vertical={false}
               />
               <XAxis
-                dataKey="date"
+                dataKey="dateLabel"
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
-                interval={Math.max(
-                  0,
-                  Math.floor(zoneChartData.length / 10) - 1
-                )}
+                interval={calculateTickInterval(zoneChartData.length)}
               />
               <YAxis
+                domain={[0, "auto"]}
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
@@ -685,9 +702,12 @@ export default function HeartRate() {
       {/* Section 4: HRV Trend                                             */}
       {/* ================================================================ */}
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="card-header">
-          <Heart size={18} />
-          <h3>HRV Trend (RMSSD)</h3>
+        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Heart size={18} />
+            <h3>HRV Trend (RMSSD)</h3>
+          </div>
+          <ExpandButton onClick={() => setExpandedChart("hrv")} />
         </div>
         <p className="card-description">
           Daily RMSSD with deep-sleep RMSSD overlay. Higher HRV generally
@@ -710,16 +730,14 @@ export default function HeartRate() {
                 vertical={false}
               />
               <XAxis
-                dataKey="date"
+                dataKey="dateLabel"
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
-                interval={Math.max(
-                  0,
-                  Math.floor(hrvChartData.length / 10) - 1
-                )}
+                interval={calculateTickInterval(hrvChartData.length)}
               />
               <YAxis
+                domain={["dataMin - 5", "dataMax + 5"]}
                 tick={{ fill: "#9398ab", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "#2e3348" }}
@@ -758,6 +776,98 @@ export default function HeartRate() {
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* Expanded Chart Modals */}
+      <ChartModal
+        isOpen={expandedChart === "restingHR"}
+        onClose={() => setExpandedChart(null)}
+        title="Resting Heart Rate Trend"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={restingHRTrendData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2e3348" vertical={false} />
+            <XAxis
+              dataKey="dateLabel"
+              tick={{ fill: "#9398ab", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "#2e3348" }}
+              interval={calculateTickInterval(restingHRTrendData.length)}
+            />
+            <YAxis
+              domain={["dataMin - 3", "dataMax + 3"]}
+              tick={{ fill: "#9398ab", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "#2e3348" }}
+              label={{ value: "BPM", angle: -90, position: "insideLeft", style: { fill: "#606580" } }}
+            />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend />
+            <Line type="monotone" dataKey="restingHR" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} name="Resting HR" />
+            <Line type="monotone" dataKey="trend" stroke={COLORS.resting} strokeWidth={1.5} strokeDasharray="6 3" dot={false} name="Trend" />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartModal>
+
+      <ChartModal
+        isOpen={expandedChart === "zones"}
+        onClose={() => setExpandedChart(null)}
+        title="Heart Rate Zones"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={zoneChartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2e3348" vertical={false} />
+            <XAxis
+              dataKey="dateLabel"
+              tick={{ fill: "#9398ab", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "#2e3348" }}
+              interval={calculateTickInterval(zoneChartData.length)}
+            />
+            <YAxis
+              domain={[0, "auto"]}
+              tick={{ fill: "#9398ab", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "#2e3348" }}
+              label={{ value: "Minutes", angle: -90, position: "insideLeft", style: { fill: "#606580" } }}
+            />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend />
+            <Bar dataKey="fatBurn" fill={COLORS.fatBurn} name="Fat Burn" stackId="zones" />
+            <Bar dataKey="cardio" fill={COLORS.cardio} name="Cardio" stackId="zones" />
+            <Bar dataKey="peak" fill={COLORS.peak} name="Peak" stackId="zones" radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartModal>
+
+      <ChartModal
+        isOpen={expandedChart === "hrv"}
+        onClose={() => setExpandedChart(null)}
+        title="HRV Trend (RMSSD)"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={hrvChartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2e3348" vertical={false} />
+            <XAxis
+              dataKey="dateLabel"
+              tick={{ fill: "#9398ab", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "#2e3348" }}
+              interval={calculateTickInterval(hrvChartData.length)}
+            />
+            <YAxis
+              domain={["dataMin - 5", "dataMax + 5"]}
+              tick={{ fill: "#9398ab", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "#2e3348" }}
+              label={{ value: "ms", angle: -90, position: "insideLeft", style: { fill: "#606580" } }}
+            />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend />
+            <Line type="monotone" dataKey="dailyRmssd" stroke={COLORS.accent} strokeWidth={2} dot={{ r: 3 }} name="Daily RMSSD" />
+            <Line type="monotone" dataKey="deepRmssd" stroke={COLORS.deepRmssd} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3 }} name="Deep Sleep RMSSD" connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartModal>
     </div>
   );
 }

@@ -16,6 +16,12 @@ import {
   Legend,
 } from "recharts";
 import DateRangePicker from "../components/DateRangePicker";
+import { ChartModal, ExpandButton } from "../components/ChartModal";
+import {
+  spansMultipleYears,
+  formatDateLabel,
+  calculateTickInterval,
+} from "../utils/dateFormat";
 import type { SleepLog, SleepStage } from "../types";
 
 const API_BASE = "http://localhost:8000";
@@ -87,6 +93,9 @@ export default function Sleep() {
   const [breathingRate, setBreathingRate] = useState<BreathingRateDaily | null>(null);
   const [skinTemp, setSkinTemp] = useState<SkinTempDaily | null>(null);
   const [vitalsLoading, setVitalsLoading] = useState(false);
+
+  // Modal states for expanded charts
+  const [expandedChart, setExpandedChart] = useState<string | null>(null);
 
   // Fetch sleep logs for the date range
   const fetchSleepLogs = useCallback(async (start: string, end: string) => {
@@ -192,6 +201,13 @@ export default function Sleep() {
     setEndDate(end);
   };
 
+  // Detect if date range spans multiple years
+  const dateList = useMemo(
+    () => sleepLogs.map((l) => l.date),
+    [sleepLogs]
+  );
+  const needsYear = useMemo(() => spansMultipleYears(dateList), [dateList]);
+
   // Sleep Score Trend data
   const scoreTrendData = useMemo(() => {
     return sleepLogs
@@ -199,10 +215,10 @@ export default function Sleep() {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .map((l) => ({
         date: l.date,
-        dateLabel: format(parseISO(l.date), "MMM d"),
+        dateLabel: formatDateLabel(l.date, needsYear),
         score: l.overallScore,
       }));
-  }, [sleepLogs]);
+  }, [sleepLogs, needsYear]);
 
   // Duration breakdown data
   const durationData = useMemo(() => {
@@ -210,13 +226,13 @@ export default function Sleep() {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .map((l) => ({
         date: l.date,
-        dateLabel: format(parseISO(l.date), "MMM d"),
+        dateLabel: formatDateLabel(l.date, needsYear),
         deep: l.deepSleepMinutes ?? 0,
         rem: l.remSleepMinutes ?? 0,
         light: l.lightSleepMinutes ?? 0,
         awake: l.minutesAwake ?? 0,
       }));
-  }, [sleepLogs]);
+  }, [sleepLogs, needsYear]);
 
   // Build hypnogram data from stages
   const hypnogramData = useMemo((): HypnogramPoint[] => {
@@ -448,9 +464,12 @@ export default function Sleep() {
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {/* Sleep Score Trend */}
           <div className="card">
-            <div className="card-header">
-              <Moon size={18} />
-              <h3>Sleep Score Trend</h3>
+            <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Moon size={18} />
+                <h3>Sleep Score Trend</h3>
+              </div>
+              <ExpandButton onClick={() => setExpandedChart("score")} />
             </div>
             <p className="card-description">
               Click on a data point to view detailed sleep stages for that
@@ -476,13 +495,13 @@ export default function Sleep() {
                   />
                   <XAxis
                     dataKey="dateLabel"
-                    tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+                    tick={{ fill: "var(--text-muted)", fontSize: 11 }}
                     axisLine={{ stroke: "var(--border-color)" }}
                     tickLine={false}
-                    interval="preserveStartEnd"
+                    interval={calculateTickInterval(scoreTrendData.length)}
                   />
                   <YAxis
-                    domain={[0, 100]}
+                    domain={["dataMin - 5", "dataMax + 5"]}
                     tick={{ fill: "var(--text-muted)", fontSize: 12 }}
                     axisLine={{ stroke: "var(--border-color)" }}
                     tickLine={false}
@@ -693,9 +712,12 @@ export default function Sleep() {
 
           {/* Sleep Duration Breakdown */}
           <div className="card">
-            <div className="card-header">
-              <Moon size={18} />
-              <h3>Sleep Duration Breakdown</h3>
+            <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Moon size={18} />
+                <h3>Sleep Duration Breakdown</h3>
+              </div>
+              <ExpandButton onClick={() => setExpandedChart("duration")} />
             </div>
             <p className="card-description">
               Nightly sleep stage composition. Click a bar to select that night.
@@ -718,9 +740,10 @@ export default function Sleep() {
                     tick={{ fill: "var(--text-muted)", fontSize: 11 }}
                     axisLine={{ stroke: "var(--border-color)" }}
                     tickLine={false}
-                    interval="preserveStartEnd"
+                    interval={calculateTickInterval(durationData.length)}
                   />
                   <YAxis
+                    domain={[0, "auto"]}
                     tick={{ fill: "var(--text-muted)", fontSize: 12 }}
                     axisLine={{ stroke: "var(--border-color)" }}
                     tickLine={false}
@@ -1113,6 +1136,97 @@ export default function Sleep() {
           </div>
         </div>
       )}
+
+      {/* Expanded Chart Modals */}
+      <ChartModal
+        isOpen={expandedChart === "score"}
+        onClose={() => setExpandedChart(null)}
+        title="Sleep Score Trend"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={scoreTrendData} onClick={handleScoreClick}>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--border-color)"
+              vertical={false}
+            />
+            <XAxis
+              dataKey="dateLabel"
+              tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+              axisLine={{ stroke: "var(--border-color)" }}
+              tickLine={false}
+              interval={calculateTickInterval(scoreTrendData.length)}
+            />
+            <YAxis
+              domain={["dataMin - 5", "dataMax + 5"]}
+              tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+              axisLine={{ stroke: "var(--border-color)" }}
+              tickLine={false}
+              width={40}
+            />
+            <Tooltip content={<ScoreTooltip />} />
+            <Line
+              type="monotone"
+              dataKey="score"
+              stroke="var(--accent)"
+              strokeWidth={2}
+              dot={{ r: 3, fill: "var(--accent)" }}
+              activeDot={{ r: 6 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartModal>
+
+      <ChartModal
+        isOpen={expandedChart === "duration"}
+        onClose={() => setExpandedChart(null)}
+        title="Sleep Duration Breakdown"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={durationData} onClick={handleDurationClick}>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--border-color)"
+              vertical={false}
+            />
+            <XAxis
+              dataKey="dateLabel"
+              tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+              axisLine={{ stroke: "var(--border-color)" }}
+              tickLine={false}
+              interval={calculateTickInterval(durationData.length)}
+            />
+            <YAxis
+              domain={[0, "auto"]}
+              tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+              axisLine={{ stroke: "var(--border-color)" }}
+              tickLine={false}
+              width={50}
+              label={{
+                value: "minutes",
+                angle: -90,
+                position: "insideLeft",
+                style: { fill: "var(--text-muted)", fontSize: 12 },
+              }}
+            />
+            <Tooltip content={<DurationTooltip />} />
+            <Legend
+              formatter={(value: string) =>
+                value.charAt(0).toUpperCase() + value.slice(1)
+              }
+            />
+            <Bar dataKey="deep" stackId="duration" fill={STAGE_COLORS.deep} />
+            <Bar dataKey="light" stackId="duration" fill={STAGE_COLORS.light} />
+            <Bar dataKey="rem" stackId="duration" fill={STAGE_COLORS.rem} />
+            <Bar
+              dataKey="awake"
+              stackId="duration"
+              fill={STAGE_COLORS.wake}
+              radius={[4, 4, 0, 0]}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartModal>
     </div>
   );
 }
